@@ -1,0 +1,43 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://4FVa8bFFmtVBVeY.root:GNx1Ab9n4lF53vn2IytP@gateway03.us-east-1.prod.aws.tidbcloud.com:4000/KmXGM2M8sNG4NkPhVy2EbJ?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "s3://vida-prod-gitrepo/webdev-git/310519663770677570/KmXGM2M8sNG4NkPhVy2EbJ",
+    "access_key_id": "ASIAZV3A2ECZJS3MXCEW",
+    "secret_access_key": "9CVPWF+HB9dnnLlScxPm7voKv0cYAy0zD/BDc6mi",
+    "session_token": "IQoJb3JpZ2luX2VjEMz//////////wEaCXVzLWVhc3QtMSJIMEYCIQDBW/C2bkVKek1Op3fnD04TexjDh70sNXi1KYRwDAslfgIhAOQo8+sHq0YKypwj9JpiqWWG/4/GRpJZ7wyX+ZpOQl8NKv8DCJX//////////wEQBBoMNjY1Mzg2MDk4ODY2IgzWW+wNi0H6SNcmX4Iq0wPY6l8MmmI5RzVDv0XZdT8x41wXL11URkZsZnyWiMx+xLK8paeJs/oU9ew7/C5IXzEG3vFBS6vM9Vfi6Dnp0ntFlk8OHE29JNc1aX38uNUcodWZkBjeU3nZaekx1O7CcgpAaQwDCGLn+OXqpxiLu9QCj0J2DMdoisVjHDLPsgoWSDTeRhZehdZnDm8W2n7/OgNOAIqu/dQOJOo+XwMPWNLFN6W6wzUl26SnL0DJUxwzvmS9x1BiDtXrXGFuHvnit5RAKqqr3XpjcigLU9/kqmy8WY7/OyjrMCx7Lu6TuLv/99ImNdRfscfXRAEuk279tfuKA1eeFlPmOcxWaSW6wI0q0BZEWhVUGg6XG/bcAoCm6UEKxfjr43Y4TPhLYqYb4dhU8jrvKzt+xkD2b4VsCq9p8/FDquPvqqc4mzbe93txHCcVxZMI/d68aT3DlU9s2h2yECsYqUfx6e4OxvWWhN/kom0PuZTJOhb5XUVfl7/PQY32h05+apdOKrPpSx62bJoPjOlE1hPIpr4N2Q7oXSunCmYVGcsb6cYSgf3GOaRryvEAiO8wGH608/8LaUFol9gvtAvqq6zUwDPjt/5M6LQpr2YO5SzeDEjZUcytZDmKAfJKXTCa8MvRBjqcAasyJJrHMqi1XrLXVsMW0jph3HOu5XiKpkbILGF3Pw+5FvQJe3n45s5UvuinmRgXy10CMQAcy/EWs6p8MXHdi1FR2pIDPfI+LUECh40X3ATNTIRlil7Xe1sSfUP3PK1PapdCDcMwmXyAy0fKH5KhQWDMNSngjC2ntG8BxhkZsge/C75HmDWlWL3fHbItRXjpSkcbXJKGlrFOF6g5gg==",
+    "expiration": "2026-06-18T07:40:10.000Z"
+  },
+  "name": "faucetpay-panel",
+  "path": "/home/ubuntu/faucetpay-panel",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "b56EBFX9zdQidHGQzyjK7q",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "5YU28RTuEvCHV3d9mhfSAL",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "Hel8ena Alm6eida",
+    "OWNER_OPEN_ID": "9WvHDaa2jZm3Z85wMvXmHp",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "8534abc1-8ffe-4c2e-adcb-971026e5b4ce",
+    "VITE_APP_ID": "KmXGM2M8sNG4NkPhVy2EbJ",
+    "VITE_APP_LOGO": "",
+    "VITE_APP_TITLE": "FaucetPay Panel",
+    "VITE_FRONTEND_FORGE_API_KEY": "nNeQhtT3azF6dtmxYJsYC9",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
