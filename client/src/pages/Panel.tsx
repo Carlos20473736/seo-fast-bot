@@ -174,6 +174,20 @@ export default function Panel() {
     return () => { s.disconnect(); };
   }, [addLog, utils]);
 
+  // Captura headers reais do navegador do usuário
+  const getBrowserHeaders = () => {
+    return {
+      "user-agent": navigator.userAgent,
+      "accept-language": navigator.language + (navigator.languages?.length > 1 ? "," + navigator.languages.slice(1).map((l, i) => `${l};q=${(0.9 - i * 0.1).toFixed(1)}`).join(",") : ""),
+      "sec-ch-ua": (navigator as any).userAgentData?.brands?.map((b: any) => `"${b.brand}";v="${b.version}"`).join(", ") || "",
+      "sec-ch-ua-mobile": (navigator as any).userAgentData?.mobile ? "?1" : "?0",
+      "sec-ch-ua-platform": `"${(navigator as any).userAgentData?.platform || navigator.platform || "Unknown"}"`,
+      "screen-resolution": `${screen.width}x${screen.height}`,
+      "device-pixel-ratio": String(window.devicePixelRatio || 1),
+      "timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  };
+
   const handleCreateAccount = (data: {
     username: string;
     email: string;
@@ -196,7 +210,7 @@ export default function Panel() {
       seofast_wallet: "idle",
     });
     setLogs([]);
-    socket.emit("create_account", data);
+    socket.emit("create_account", { ...data, browserHeaders: getBrowserHeaders() });
   };
 
   const handleWithdrawal = (data: { email: string; password: string; amount: number }) => {
@@ -215,7 +229,7 @@ export default function Panel() {
       seofast_wallet: "idle",
     });
     setLogs([]);
-    socket.emit("request_withdrawal", data);
+    socket.emit("request_withdrawal", { ...data, browserHeaders: getBrowserHeaders() });
   };
 
   const handleFaucetPayLogin = (data: { email: string; password: string; twoFaCode?: string }) => {
@@ -234,7 +248,7 @@ export default function Panel() {
       seofast_wallet: "idle",
     });
     setLogs([]);
-    socket.emit("faucetpay_login", data);
+    socket.emit("faucetpay_login", { ...data, browserHeaders: getBrowserHeaders() });
   };
 
   return (

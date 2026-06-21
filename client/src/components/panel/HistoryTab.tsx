@@ -27,6 +27,23 @@ import { toast } from "sonner";
 import { io, type Socket } from "socket.io-client";
 
 // ============================================================
+// BROWSER HEADERS HELPER
+// ============================================================
+
+function getBrowserHeaders() {
+  return {
+    "user-agent": navigator.userAgent,
+    "accept-language": navigator.language + (navigator.languages?.length > 1 ? "," + navigator.languages.slice(1).map((l, i) => `${l};q=${(0.9 - i * 0.1).toFixed(1)}`).join(",") : ""),
+    "sec-ch-ua": (navigator as any).userAgentData?.brands?.map((b: any) => `"${b.brand}";v="${b.version}"`).join(", ") || undefined,
+    "sec-ch-ua-mobile": (navigator as any).userAgentData?.mobile ? "?1" : "?0",
+    "sec-ch-ua-platform": (navigator as any).userAgentData?.platform ? `"${(navigator as any).userAgentData.platform}"` : undefined,
+    "screen-resolution": `${screen.width}x${screen.height}`,
+    "device-pixel-ratio": String(window.devicePixelRatio || 1),
+    "timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -282,7 +299,7 @@ export default function HistoryTab() {
         ...prev,
         [email]: { email, status: "connecting", balance: "0", loginTime: 0, lastActivity: 0 },
       }));
-      socketRef.current.emit("seofast_login", { email, password });
+      socketRef.current.emit("seofast_login", { email, password, browserHeaders: getBrowserHeaders() });
     }
 
     // Wait 4s before processing next item
@@ -333,13 +350,13 @@ export default function HistoryTab() {
 
   const handleCheckWithdrawal = useCallback((email: string, password: string) => {
     if (!socketRef.current) return;
-    socketRef.current.emit("check_withdrawal_status", { email, password });
+    socketRef.current.emit("check_withdrawal_status", { email, password, browserHeaders: getBrowserHeaders() });
   }, []);
 
   const handleRequestApproval = useCallback((email: string, password: string) => {
     if (!socketRef.current) return;
     toast.info(`Solicitando aprovação para ${email}...`);
-    socketRef.current.emit("seofast_request_approval", { email, password });
+    socketRef.current.emit("seofast_request_approval", { email, password, browserHeaders: getBrowserHeaders() });
   }, []);
 
   const handleDisconnect = useCallback((email: string) => {

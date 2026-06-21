@@ -46,6 +46,20 @@ export interface AccountData {
   password: string;
   referrer?: string;
   createSeofast?: boolean;
+  existingAccount?: boolean;
+}
+
+/** Headers reais capturados do navegador do usuário */
+export interface BrowserHeaders {
+  "user-agent": string;
+  "accept-language": string;
+  "sec-ch-ua"?: string;
+  "sec-ch-ua-mobile"?: string;
+  "sec-ch-ua-platform"?: string;
+  "screen-resolution"?: string;
+  "device-pixel-ratio"?: string;
+  "timezone"?: string;
+  [key: string]: string | undefined;
 }
 
 export type LogType = "info" | "success" | "warn" | "error";
@@ -67,42 +81,118 @@ const SITE_DOMAIN = "https://faucetpay.io";
 const CAPTCHA_URL = "https://basiliskcaptcha.com";
 const API_URL = "https://api.faucetpay.io";
 
-const HEADERS: Record<string, string> = {
-  accept: "*/*",
-  "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-  "content-type": "text/plain;charset=UTF-8",
-  origin: "https://faucetpay.io",
-  referer: "https://faucetpay.io/",
-  "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "sec-fetch-dest": "empty",
-  "sec-fetch-mode": "cors",
-  "sec-fetch-site": "cross-site",
-  "user-agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+// ============================================================
+// BROWSER HEADERS - Constrói headers a partir dos dados reais do navegador
+// ============================================================
+
+/** Fallback headers caso o navegador não envie (não deve acontecer) */
+const FALLBACK_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
+const FALLBACK_LANG = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7";
+const FALLBACK_CH_UA = '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"';
+const FALLBACK_CH_MOBILE = "?0";
+const FALLBACK_CH_PLATFORM = '"Windows"';
+
+/**
+ * Constrói HEADERS para captcha (basilisk) usando headers reais do navegador.
+ * Se browserHeaders não for fornecido, usa fallback.
+ */
+function buildCaptchaHeaders(bh?: BrowserHeaders): Record<string, string> {
+  return {
+    accept: "*/*",
+    "accept-language": bh?.["accept-language"] || FALLBACK_LANG,
+    "content-type": "text/plain;charset=UTF-8",
+    origin: "https://faucetpay.io",
+    referer: "https://faucetpay.io/",
+    "sec-ch-ua": bh?.["sec-ch-ua"] || FALLBACK_CH_UA,
+    "sec-ch-ua-mobile": bh?.["sec-ch-ua-mobile"] || FALLBACK_CH_MOBILE,
+    "sec-ch-ua-platform": bh?.["sec-ch-ua-platform"] || FALLBACK_CH_PLATFORM,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "user-agent": bh?.["user-agent"] || FALLBACK_UA,
+  };
+}
+
+/**
+ * Constrói HEADERS_API para FaucetPay API usando headers reais do navegador.
+ */
+function buildApiHeaders(bh?: BrowserHeaders): Record<string, string> {
+  return {
+    accept: "application/json, text/plain, */*",
+    "accept-language": bh?.["accept-language"] || FALLBACK_LANG,
+    "content-type": "application/json",
+    origin: "https://faucetpay.io",
+    referer: "https://faucetpay.io/",
+    "sec-ch-ua": bh?.["sec-ch-ua"] || FALLBACK_CH_UA,
+    "sec-ch-ua-mobile": bh?.["sec-ch-ua-mobile"] || FALLBACK_CH_MOBILE,
+    "sec-ch-ua-platform": bh?.["sec-ch-ua-platform"] || FALLBACK_CH_PLATFORM,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "user-agent": bh?.["user-agent"] || FALLBACK_UA,
+  };
+}
+
+/**
+ * Constrói IMG_HEADERS para download de imagens.
+ */
+function buildImgHeaders(bh?: BrowserHeaders): Record<string, string> {
+  return {
+    referer: "https://faucetpay.io/",
+    "user-agent": bh?.["user-agent"] || FALLBACK_UA,
+  };
+}
+
+// Variáveis de módulo que são setadas por createAccountProcess/loginFaucetPay
+// para que funções internas (solveCaptcha) possam acessar sem mudar todas as assinaturas
+let _activeBrowserHeaders: BrowserHeaders | undefined = undefined;
+
+// Getters para uso interno (mantém compatibilidade com código existente)
+function getHEADERS(): Record<string, string> { return buildCaptchaHeaders(_activeBrowserHeaders); }
+function getHEADERS_API(): Record<string, string> { return buildApiHeaders(_activeBrowserHeaders); }
+function getIMG_HEADERS(): Record<string, string> { return buildImgHeaders(_activeBrowserHeaders); }
+
+// Aliases para manter compatibilidade com referências existentes (getter properties)
+// Usamos Object.defineProperty para que HEADERS/HEADERS_API/IMG_HEADERS sejam dinâmicos
+const _headersProxy = {
+  get HEADERS() { return getHEADERS(); },
+  get HEADERS_API() { return getHEADERS_API(); },
+  get IMG_HEADERS() { return getIMG_HEADERS(); },
 };
 
-const HEADERS_API: Record<string, string> = {
-  accept: "application/json, text/plain, */*",
-  "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-  "content-type": "application/json",
-  origin: "https://faucetpay.io",
-  referer: "https://faucetpay.io/",
-  "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "sec-fetch-dest": "empty",
-  "sec-fetch-mode": "cors",
-  "sec-fetch-site": "same-site",
-  "user-agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-};
+// Re-export como constantes que são na verdade getters dinâmicos
+const HEADERS = new Proxy({} as Record<string, string>, {
+  get(_, prop: string) { return getHEADERS()[prop]; },
+  ownKeys() { return Object.keys(getHEADERS()); },
+  getOwnPropertyDescriptor(_, prop: string) {
+    const h = getHEADERS();
+    if (prop in h) return { value: h[prop], enumerable: true, configurable: true };
+    return undefined;
+  },
+  has(_, prop: string) { return prop in getHEADERS(); },
+});
 
-const IMG_HEADERS: Record<string, string> = {
-  referer: "https://faucetpay.io/",
-  "user-agent": HEADERS["user-agent"],
-};
+const HEADERS_API = new Proxy({} as Record<string, string>, {
+  get(_, prop: string) { return getHEADERS_API()[prop]; },
+  ownKeys() { return Object.keys(getHEADERS_API()); },
+  getOwnPropertyDescriptor(_, prop: string) {
+    const h = getHEADERS_API();
+    if (prop in h) return { value: h[prop], enumerable: true, configurable: true };
+    return undefined;
+  },
+  has(_, prop: string) { return prop in getHEADERS_API(); },
+});
+
+const IMG_HEADERS = new Proxy({} as Record<string, string>, {
+  get(_, prop: string) { return getIMG_HEADERS()[prop]; },
+  ownKeys() { return Object.keys(getIMG_HEADERS()); },
+  getOwnPropertyDescriptor(_, prop: string) {
+    const h = getIMG_HEADERS();
+    if (prop in h) return { value: h[prop], enumerable: true, configurable: true };
+    return undefined;
+  },
+  has(_, prop: string) { return prop in getIMG_HEADERS(); },
+});
 
 // ============================================================
 // CONFIG HELPERS
@@ -858,7 +948,13 @@ export async function reactivateAccount(
 // MAIN PROCESS - Matches Python's create_account flow
 // ============================================================
 
-export async function createAccountProcess(data: AccountData, emit: EmitFn): Promise<void> {
+export async function createAccountProcess(data: AccountData, emit: EmitFn, browserHeaders?: BrowserHeaders): Promise<void> {
+  // Seta os headers do navegador real para uso em todas as requisições deste ciclo
+  _activeBrowserHeaders = browserHeaders;
+  if (browserHeaders) {
+    emit.log(`[Headers] UA: ${browserHeaders["user-agent"]?.slice(0, 60)}... | Lang: ${browserHeaders["accept-language"]?.slice(0, 20)}`, "info");
+  }
+
   const config = await getConfig();
   // IP fixo (sessid) por conta: todo o ciclo desta conta usa o mesmo IP.
   const pctx: ProxyContext = { cfg: resolveProxyConfig(config), anchor: data.email };
@@ -994,7 +1090,7 @@ export async function createAccountProcess(data: AccountData, emit: EmitFn): Pro
     emit.log("Iniciando fluxo SEOFast...", "info");
     emit.status("seofast_register", "running");
     
-    const sfResult = await createSeofastAccount(config, data.email, data.email, undefined, emit);
+    const sfResult = await createSeofastAccount(config, data.email, data.email, undefined, emit, browserHeaders);
     
     if (sfResult.success) {
       emit.status("seofast_register", "done");
@@ -1249,7 +1345,13 @@ async function waitForOtpCode(
  *      read OTP via IMAP (or use provided code), POST /account/verify-2fa
  *   4) POST /account/get-user-information (authorized only)
  */
-export async function loginFaucetPay(data: LoginData, emit: EmitFn): Promise<LoginResult> {
+export async function loginFaucetPay(data: LoginData, emit: EmitFn, browserHeaders?: BrowserHeaders): Promise<LoginResult> {
+  // Seta os headers do navegador real para uso em todas as requisições deste ciclo
+  _activeBrowserHeaders = browserHeaders;
+  if (browserHeaders) {
+    emit.log(`[Headers] UA: ${browserHeaders["user-agent"]?.slice(0, 60)}... | Lang: ${browserHeaders["accept-language"]?.slice(0, 20)}`, "info");
+  }
+
   const config = await getConfig();
   const jar: Record<string, string> = {};
 

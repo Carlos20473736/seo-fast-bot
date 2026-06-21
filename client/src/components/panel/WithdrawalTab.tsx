@@ -13,6 +13,20 @@ import {
   Clock,
   Ban,
 } from "lucide-react";
+
+// Browser headers helper - captura headers reais do navegador
+function getBrowserHeaders() {
+  return {
+    "user-agent": navigator.userAgent,
+    "accept-language": navigator.language + (navigator.languages?.length > 1 ? "," + navigator.languages.slice(1).map((l, i) => `${l};q=${(0.9 - i * 0.1).toFixed(1)}`).join(",") : ""),
+    "sec-ch-ua": (navigator as any).userAgentData?.brands?.map((b: any) => `"${b.brand}";v="${b.version}"`).join(", ") || undefined,
+    "sec-ch-ua-mobile": (navigator as any).userAgentData?.mobile ? "?1" : "?0",
+    "sec-ch-ua-platform": (navigator as any).userAgentData?.platform ? `"${(navigator as any).userAgentData.platform}"` : undefined,
+    "screen-resolution": `${screen.width}x${screen.height}`,
+    "device-pixel-ratio": String(window.devicePixelRatio || 1),
+    "timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
 import { toast } from "sonner";
 import { io, type Socket } from "socket.io-client";
 
@@ -186,7 +200,7 @@ export default function WithdrawalTab({ onSubmit, isRunning }: WithdrawalTabProp
     e.preventDefault();
     if (!email || !password || !socketRef.current) return;
     setSession({ status: "connecting", balance: "0" });
-    socketRef.current.emit("seofast_login", { email, password });
+    socketRef.current.emit("seofast_login", { email, password, browserHeaders: getBrowserHeaders() });
   };
 
   const handleDisconnect = () => {
@@ -198,13 +212,13 @@ export default function WithdrawalTab({ onSubmit, isRunning }: WithdrawalTabProp
   const handleCheckWithdrawal = () => {
     if (!socketRef.current || !email || !password) return;
     setCheckingWithdrawal(true);
-    socketRef.current.emit("check_withdrawal_status", { email, password });
+    socketRef.current.emit("check_withdrawal_status", { email, password, browserHeaders: getBrowserHeaders() });
   };
 
   const handleRequestApproval = () => {
     if (!socketRef.current || !email || !password) return;
     setRequestingApproval(true);
-    socketRef.current.emit("seofast_request_approval", { email, password });
+    socketRef.current.emit("seofast_request_approval", { email, password, browserHeaders: getBrowserHeaders() });
   };
 
   const handleRefreshBalance = () => {

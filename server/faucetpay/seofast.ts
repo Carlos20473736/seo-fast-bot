@@ -18,8 +18,7 @@ import { URLSearchParams } from "url";
 import { CookieJar } from "tough-cookie";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-import type { EmitFn } from "./engine";
-import { getHeadersOnly, generateHeaders } from "./header-randomizer";
+import type { EmitFn, BrowserHeaders } from "./engine";
 import { resolveProxyConfig, createProxyHttpsAgent, proxyLabel, type ProxyConfig } from "./proxy";
 
 // ============================================================
@@ -32,36 +31,42 @@ const SEOFAST_APP_VERSION = "1.1.1";
 const SEOFAST_APP_SECRET = "seo_fast_SFk1gR5h5DGH";
 const SEOFAST_PACKAGE_NAME = "com.example.seofast";
 
-const DESKTOP_UA =
+// Fallback UAs caso browserHeaders não seja fornecido
+const FALLBACK_DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
-
-// Firefox/Android UA para login desktop (consistente com o que funciona na captura)
-const FIREFOX_MOBILE_UA =
+const FALLBACK_MOBILE_UA =
   "Mozilla/5.0 (Android 12; Mobile; rv:151.0) Gecko/151.0 Firefox/151.0";
+const FALLBACK_LANG = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7";
+const FALLBACK_CH_UA = '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"';
+const FALLBACK_CH_MOBILE = "?0";
+const FALLBACK_CH_PLATFORM = '"Windows"';
 
-// Headers estáticos mantidos como fallback
-const SEOFAST_HEADERS: Record<string, string> = {
-  accept: "*/*",
-  "accept-language": "pt-BR,pt;q=0.9",
-  "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-  origin: "https://seo-fast.ru",
-  referer: "https://seo-fast.ru/register",
-  "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "sec-fetch-dest": "empty",
-  "sec-fetch-mode": "cors",
-  "sec-fetch-site": "same-origin",
-  "user-agent": DESKTOP_UA,
-  "x-requested-with": "XMLHttpRequest",
-};
+// Variável de módulo para armazenar os browserHeaders ativos neste ciclo
+let _seofastBrowserHeaders: BrowserHeaders | undefined = undefined;
 
-/**
- * Gera headers randomizados Firefox/Android para registro.
- * countryCode é determinado pelo IP da proxy usada.
- */
-function getRandomRegistrationHeaders(countryCode: string = "US"): Record<string, string> {
-  return getHeadersOnly(countryCode);
+/** Retorna o User-Agent real do navegador ou fallback */
+function getBrowserUA(): string {
+  return _seofastBrowserHeaders?.["user-agent"] || FALLBACK_DESKTOP_UA;
+}
+
+/** Retorna o Accept-Language real do navegador ou fallback */
+function getBrowserLang(): string {
+  return _seofastBrowserHeaders?.["accept-language"] || FALLBACK_LANG;
+}
+
+/** Retorna sec-ch-ua real ou fallback */
+function getBrowserChUa(): string {
+  return _seofastBrowserHeaders?.["sec-ch-ua"] || FALLBACK_CH_UA;
+}
+
+/** Retorna sec-ch-ua-mobile real ou fallback */
+function getBrowserChMobile(): string {
+  return _seofastBrowserHeaders?.["sec-ch-ua-mobile"] || FALLBACK_CH_MOBILE;
+}
+
+/** Retorna sec-ch-ua-platform real ou fallback */
+function getBrowserChPlatform(): string {
+  return _seofastBrowserHeaders?.["sec-ch-ua-platform"] || FALLBACK_CH_PLATFORM;
 }
 
 // ============================================================
@@ -403,9 +408,9 @@ class HttpClient {
 
 function mobilePageHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Upgrade-Insecure-Requests": "1",
     Accept:
       "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -419,9 +424,9 @@ function mobilePageHeaders(): Record<string, string> {
 
 function mobileAjaxLoginHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     "X-Requested-With": "XMLHttpRequest",
     Accept:
@@ -436,9 +441,9 @@ function mobileAjaxLoginHeaders(): Record<string, string> {
 
 function mobileAjaxJsonHeaders(referer = "https://seo-fast.bz/"): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Content-Type": "application/json; charset=utf-8",
     "X-Requested-With": "XMLHttpRequest",
     Accept: "application/json, text/plain, */*",
@@ -452,9 +457,9 @@ function mobileAjaxJsonHeaders(referer = "https://seo-fast.bz/"): Record<string,
 
 function profileAjaxHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     "X-Requested-With": "XMLHttpRequest",
     Accept: "*/*",
@@ -477,14 +482,14 @@ function profileAjaxHeaders(): Record<string, string> {
 function desktopPageHeaders(referer?: string): Record<string, string> {
   return {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "accept-language": "en-US",
+    "accept-language": getBrowserLang(),
     "accept-encoding": "gzip, deflate, br, zstd",
     "sec-fetch-dest": "document",
     "sec-fetch-mode": "navigate",
     "sec-fetch-site": "same-origin",
     "sec-fetch-user": "?1",
     "upgrade-insecure-requests": "1",
-    "user-agent": FIREFOX_MOBILE_UA,
+    "user-agent": getBrowserUA(),
     ...(referer ? { referer } : {}),
   };
 }
@@ -496,7 +501,7 @@ function desktopPageHeaders(referer?: string): Record<string, string> {
 function desktopAjaxHeaders(referer: string = `${SEOFAST_URL}/profile`): Record<string, string> {
   return {
     accept: "*/*",
-    "accept-language": "en-US",
+    "accept-language": getBrowserLang(),
     "accept-encoding": "gzip, deflate, br, zstd",
     "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
     "x-requested-with": "XMLHttpRequest",
@@ -505,7 +510,7 @@ function desktopAjaxHeaders(referer: string = `${SEOFAST_URL}/profile`): Record<
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
-    "user-agent": FIREFOX_MOBILE_UA,
+    "user-agent": getBrowserUA(),
     "priority": "u=0",
     te: "trailers",
   };
@@ -650,16 +655,30 @@ async function seofastRegister(
 ): Promise<RegisterResult | null> {
   emit.log(`[SF 1/5] Registrando no SEO-Fast: ${username}`, "info");
 
-  // Gerar headers randomizados Firefox/Android baseado no país do IP
-  const randomHeaders = getRandomRegistrationHeaders(countryCode);
-  emit.log(`[Headers] UA: ${randomHeaders["user-agent"]?.slice(0, 60)}... | Lang: ${randomHeaders["accept-language"]}`, "info");
+  // Usar headers reais do navegador do usuário
+  const regHeaders: Record<string, string> = {
+    accept: "*/*",
+    "accept-language": getBrowserLang(),
+    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    origin: "https://seo-fast.ru",
+    referer: "https://seo-fast.ru/register",
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": getBrowserUA(),
+    "x-requested-with": "XMLHttpRequest",
+  };
+  emit.log(`[Headers] UA: ${getBrowserUA().slice(0, 60)}... | Lang: ${getBrowserLang().slice(0, 20)}`, "info");
 
   // Acessar página de registro para obter cookies/sessão
   await client.request("GET", `${SEOFAST_URL}/register`, {
     headers: {
-      "user-agent": randomHeaders["user-agent"],
+      "user-agent": getBrowserUA(),
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "accept-language": randomHeaders["accept-language"],
+      "accept-language": getBrowserLang(),
     },
   });
   await sleep(1000);
@@ -671,7 +690,7 @@ async function seofastRegister(
   }).toString();
 
   const resp = await client.request("POST", `${SEOFAST_URL}/ajax/ajax_register.php`, {
-    headers: randomHeaders,
+    headers: regHeaders,
     body: data,
   });
 
@@ -765,11 +784,11 @@ async function seofastMobileLogin(
   emit.log(`Device ID: ${deviceId} | Perfil: ${profile.hardware.model}`, "info");
 
   const client = new HttpClient({
-    "User-Agent": generateUserAgent(profile),
+    "User-Agent": getBrowserUA(),
     "X-App-Token": appToken,
     "X-App-Version": SEOFAST_APP_VERSION,
     "X-Device-Id": deviceId,
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Language": getBrowserLang(),
   }, proxyAgent);
 
   // Etapa 2: GET ?pg=login
@@ -1175,7 +1194,7 @@ async function seofastConfirmVerification(
 
   try {
     const verifyClient = new HttpClient({
-      "user-agent": FIREFOX_MOBILE_UA,
+      "user-agent": getBrowserUA(),
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }, proxyAgent);
     const r = await verifyClient.request("GET", cleanLink, {});
@@ -1279,8 +1298,14 @@ export async function createSeofastAccount(
   userEmail: string,
   faucetpayEmail: string,
   seofastUsername: string | undefined,
-  emit: EmitFn
+  emit: EmitFn,
+  browserHeaders?: BrowserHeaders
 ): Promise<SeofastResult> {
+  // Setar headers do navegador real para uso em todas as requisições deste ciclo
+  _seofastBrowserHeaders = browserHeaders;
+  if (browserHeaders) {
+    emit.log(`[SEOFast Headers] UA: ${browserHeaders["user-agent"]?.slice(0, 60)}... | Lang: ${browserHeaders["accept-language"]?.slice(0, 20)}`, "info");
+  }
   // Proxy DataImpulse com IP fixo (sessid) ancorado no e-mail da conta —
   // mantém o MESMO IP usado no fluxo FaucetPay.
   const proxyCfg = resolveProxyConfig(config);
@@ -1369,21 +1394,13 @@ export async function createSeofastAccount(
         await sleep(5000);
         await seofastConfirmVerification(config, emit, proxyAgent);
       }
-      await sleep(2000);
-      const walletSaved = await seofastSaveWallet(registrationClient, faucetpayEmail, emit);
-      if (walletSaved) {
-        return {
-          success: true,
-          username,
-          password: seofastPassword,
-          message: "Conta SEOFast criada e carteira FaucetPay configurada!",
-        };
-      }
+      // Vinculação wallet DESATIVADA - usuário vincula manualmente
+      emit.log("[SF 5/5] Vinculação FaucetPay desativada (vincular manualmente).", "info");
       return {
-        success: false,
+        success: true,
         username,
         password: seofastPassword,
-        message: "Conta SEOFast criada, mas carteira não foi salva (login desktop falhou).",
+        message: "Conta SEOFast criada com sucesso! Vincule a carteira FaucetPay manualmente.",
       };
     }
     return {
@@ -1416,7 +1433,18 @@ export async function createSeofastAccount(
     };
   }
 
-  // 5. Salvar carteira (usando sessão desktop .ru)
+  // 5. Vinculação de carteira FaucetPay DESATIVADA
+  // O usuário vincula manualmente no SEOFast.
+  emit.log("[SF 5/5] Vinculação FaucetPay desativada (vincular manualmente).", "info");
+
+  return {
+    success: true,
+    username,
+    password: seofastPassword,
+    message: "Conta SEOFast criada com sucesso! Vincule a carteira FaucetPay manualmente.",
+  };
+
+  /* DESATIVADO - Salvar carteira automático
   await sleep(2000);
   const walletSaved = await seofastSaveWallet(desktopClient, faucetpayEmail, emit);
 
@@ -1435,4 +1463,5 @@ export async function createSeofastAccount(
     password: seofastPassword,
     message: "Conta SEOFast criada, mas carteira não foi salva.",
   };
+  */
 }

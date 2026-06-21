@@ -1,5 +1,8 @@
 /**
  * Socket.IO handler for FaucetPay account creation, SEOFast sessions, and withdrawals
+ * 
+ * browserHeaders: headers reais capturados do navegador do usuário são passados
+ * em todos os eventos e propagados para engine/seofast para uso nas requisições.
  */
 
 import { Server as SocketIOServer } from "socket.io";
@@ -18,6 +21,19 @@ import {
   disconnectAllSessions,
 } from "./seofast-session";
 
+/** Headers reais capturados do navegador do usuário */
+export interface BrowserHeaders {
+  "user-agent": string;
+  "accept-language": string;
+  "sec-ch-ua"?: string;
+  "sec-ch-ua-mobile"?: string;
+  "sec-ch-ua-platform"?: string;
+  "screen-resolution"?: string;
+  "device-pixel-ratio"?: string;
+  "timezone"?: string;
+  [key: string]: string | undefined;
+}
+
 export function registerSocketIO(httpServer: HttpServer) {
   const io = new SocketIOServer(httpServer, {
     path: "/api/socket.io",
@@ -35,20 +51,30 @@ export function registerSocketIO(httpServer: HttpServer) {
     // ACCOUNT CREATION
     // ============================================================
 
-    socket.on("create_account", (data: AccountData) => {
+    socket.on("create_account", (data: AccountData & { browserHeaders?: BrowserHeaders }) => {
       const emit: EmitFn = {
         log: (msg, type) => socket.emit("log", { msg, type }),
         status: (step, status) => socket.emit("status", { step, status }),
         result: (resultData) => socket.emit("result", resultData),
       };
 
-      createAccountProcess(data, emit).catch((err) => {
+      const browserHeaders = data.browserHeaders;
+      // Remove browserHeaders do data antes de passar para o engine
+      const accountData: AccountData = {
+        username: data.username,
+        email: data.email,
+        password: data.password,
+        referrer: data.referrer,
+        createSeofast: data.createSeofast,
+      };
+
+      createAccountProcess(accountData, emit, browserHeaders).catch((err) => {
         emit.log(`Erro fatal: ${err.message}`, "error");
         emit.result({ success: false, message: `Erro interno: ${err.message}` });
       });
     });
 
-    socket.on("reactivate_account", (data: { email: string }) => {
+    socket.on("reactivate_account", (data: { email: string; browserHeaders?: BrowserHeaders }) => {
       const emit: EmitFn = {
         log: (msg, type) => socket.emit("log", { msg, type }),
         status: (step, status) => socket.emit("status", { step, status }),
@@ -67,17 +93,17 @@ export function registerSocketIO(httpServer: HttpServer) {
 
     /**
      * Log into FaucetPay with email + password, solving the basilisk anti-bot.
-     * Input: { email: string, password: string, twoFaCode?: string }
+     * Input: { email: string, password: string, twoFaCode?: string, browserHeaders }
      * Emits: "faucetpay_login_result" with LoginResult
      */
-    socket.on("faucetpay_login", (data: { email: string; password: string; twoFaCode?: string }) => {
+    socket.on("faucetpay_login", (data: { email: string; password: string; twoFaCode?: string; browserHeaders?: BrowserHeaders }) => {
       const emit: EmitFn = {
         log: (msg, type) => socket.emit("log", { msg, type }),
         status: (step, status) => socket.emit("status", { step, status }),
         result: (resultData) => socket.emit("result", resultData),
       };
 
-      loginFaucetPay({ email: data.email, password: data.password, twoFaCode: data.twoFaCode }, emit)
+      loginFaucetPay({ email: data.email, password: data.password, twoFaCode: data.twoFaCode }, emit, data.browserHeaders)
         .then((result) => socket.emit("faucetpay_login_result", result))
         .catch((err) => {
           emit.log(`Erro fatal: ${err.message}`, "error");
@@ -91,10 +117,10 @@ export function registerSocketIO(httpServer: HttpServer) {
 
     /**
      * Login to SEOFast account and create persistent session
-     * Input: { email: string, password: string }
+     * Input: { email: string, password: string, browserHeaders }
      * Emits: "session_update" with SessionInfo
      */
-    socket.on("seofast_login", async (data: { email: string; password: string }) => {
+    socket.on("seofast_login", async (data: { email: string; password: string; browserHeaders?: BrowserHeaders }) => {
       const emit: EmitFn = {
         log: (msg, type) => socket.emit("log", { msg, type }),
         status: (step, status) => socket.emit("status", { step, status }),
@@ -106,7 +132,7 @@ export function registerSocketIO(httpServer: HttpServer) {
         const proxyCfg = resolveProxyConfig(config);
         const proxyAgent = createProxyHttpsAgent(proxyCfg, data.email, { minVersion: "TLSv1.2", maxVersion: "TLSv1.2", ciphers: "DEFAULT@SECLEVEL=1" });
         emit.log(`Proxy: ${proxyLabel(proxyCfg, data.email)}`, "info");
-        const result = await loginSession(data.email, data.password, emit, proxyAgent);
+        const result = await loginSession(data.email, data.password, emit, proxyAgent, data.browserHeaders);
         socket.emit("session_update", result);
       } catch (err: any) {
         emit.log(`Erro no login: ${err.message}`, "error");
@@ -190,10 +216,10 @@ export function registerSocketIO(httpServer: HttpServer) {
 
     /**
      * Execute withdrawal (full flow: login → check → approve → submit)
-     * Input: { email: string, password: string, amount: number }
+     * Input: { email: string, password: string, amount: number, browserHeaders }
      * Emits: "withdrawal_result"
      */
-    socket.on("request_withdrawal", async (data: { email: string; password: string; amount?: number }) => {
+    socket.on("request_withdrawal", async (data: { email: string; password: string; amount?: number; browserHeaders?: BrowserHeaders }) => {
       const emit: EmitFn = {
         log: (msg, type) => socket.emit("log", { msg, type }),
         status: (step, status) => socket.emit("status", { step, status }),
@@ -203,7 +229,7 @@ export function registerSocketIO(httpServer: HttpServer) {
       emit.status("captcha", "running");
 
       try {
-        const result = await executeWithdrawal(data.email, data.password, data.amount || 30, emit);
+        const result = await executeWithdrawal(data.email, data.password, data.amount || 30, emit, data.browserHeaders);
 
         if (result.success) {
           emit.status("captcha", "done");

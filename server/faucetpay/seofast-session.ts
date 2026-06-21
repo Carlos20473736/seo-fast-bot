@@ -15,12 +15,41 @@ import crypto from "crypto";
 import https from "https";
 import zlib from "zlib";
 import { URLSearchParams } from "url";
-import type { EmitFn } from "./engine";
+import type { EmitFn, BrowserHeaders } from "./engine";
 import { invokeLLM } from "../_core/llm";
 import { resolveProxyConfig, createProxyHttpsAgent, proxyLabel } from "./proxy";
 import { getDb } from "../db";
 import { accounts } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+
+// ============================================================
+// BROWSER HEADERS - Capturados do navegador real do usuário
+// ============================================================
+
+/** Variável de módulo que armazena os browserHeaders ativos */
+let _sessionBrowserHeaders: BrowserHeaders | undefined = undefined;
+
+const FALLBACK_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
+const FALLBACK_LANG = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7";
+const FALLBACK_CH_UA = '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"';
+const FALLBACK_CH_MOBILE = "?0";
+const FALLBACK_CH_PLATFORM = '"Windows"';
+
+function getBrowserUA(): string {
+  return _sessionBrowserHeaders?.["user-agent"] || FALLBACK_UA;
+}
+function getBrowserLang(): string {
+  return _sessionBrowserHeaders?.["accept-language"] || FALLBACK_LANG;
+}
+function getBrowserChUa(): string {
+  return _sessionBrowserHeaders?.["sec-ch-ua"] || FALLBACK_CH_UA;
+}
+function getBrowserChMobile(): string {
+  return _sessionBrowserHeaders?.["sec-ch-ua-mobile"] || FALLBACK_CH_MOBILE;
+}
+function getBrowserChPlatform(): string {
+  return _sessionBrowserHeaders?.["sec-ch-ua-platform"] || FALLBACK_CH_PLATFORM;
+}
 
 // ============================================================
 // CONFIG
@@ -312,9 +341,9 @@ class HttpClient {
 
 function mobilePageHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Upgrade-Insecure-Requests": "1",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "X-Requested-With": SEOFAST_PACKAGE_NAME,
@@ -327,9 +356,9 @@ function mobilePageHeaders(): Record<string, string> {
 
 function mobileAjaxLoginHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     "X-Requested-With": "XMLHttpRequest",
     Accept: "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01",
@@ -344,16 +373,16 @@ function mobileAjaxLoginHeaders(): Record<string, string> {
 function desktopAjaxHeaders(): Record<string, string> {
   return {
     accept: "*/*",
-    "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "accept-language": getBrowserLang(),
     "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
     origin: "https://seo-fast.ru",
-    "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "user-agent": getBrowserUA(),
     "x-requested-with": "XMLHttpRequest",
   };
 }
@@ -366,22 +395,22 @@ function desktopAjaxHeaders(): Record<string, string> {
 function desktopPageHeaders(referer?: string): Record<string, string> {
   return {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "accept-language": "en-US",
+    "accept-language": getBrowserLang(),
     "sec-fetch-dest": "document",
     "sec-fetch-mode": "navigate",
     "sec-fetch-site": "same-origin",
     "sec-fetch-user": "?1",
     "upgrade-insecure-requests": "1",
-    "user-agent": "Mozilla/5.0 (Android 12; Mobile; rv:151.0) Gecko/151.0 Firefox/151.0",
+    "user-agent": getBrowserUA(),
     ...(referer ? { referer } : {}),
   };
 }
 
 function profileAjaxHeaders(): Record<string, string> {
   return {
-    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": getBrowserChUa(),
+    "sec-ch-ua-mobile": getBrowserChMobile(),
+    "sec-ch-ua-platform": getBrowserChPlatform(),
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     "X-Requested-With": "XMLHttpRequest",
     Accept: "*/*",
@@ -532,8 +561,11 @@ export async function loginSession(
   email: string,
   password: string,
   emit: EmitFn,
-  proxyAgent?: https.Agent
+  proxyAgent?: https.Agent,
+  browserHeaders?: BrowserHeaders
 ): Promise<SessionInfo> {
+  // Setar headers do navegador real para uso em todas as requisições deste ciclo
+  if (browserHeaders) _sessionBrowserHeaders = browserHeaders;
   // Check existing session in memory
   const existing = sessions.get(email);
   if (existing && Date.now() - existing.lastActivity < SESSION_TTL_MS) {
@@ -577,11 +609,11 @@ export async function loginSession(
   emit.log(`Device: ${profile.hardware.model} | ID: ${deviceId.slice(0, 12)}...`, "info");
 
   const client = new HttpClient({
-    "User-Agent": generateUserAgent(profile),
+    "User-Agent": getBrowserUA(),
     "X-App-Token": appToken,
     "X-App-Version": SEOFAST_APP_VERSION,
     "X-Device-Id": deviceId,
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Language": getBrowserLang(),
   }, proxyAgent);
 
   if (savedCookies) {
@@ -895,10 +927,10 @@ async function doDesktopLogin(
     logpassword: password,
   }).toString();
 
-  // Use Firefox/Android headers for login (matches the approach that works)
+  // Usa headers reais do navegador do usuário
   const loginHeaders: Record<string, string> = {
     accept: "*/*",
-    "accept-language": "en-US",
+    "accept-language": getBrowserLang(),
     "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
     "x-requested-with": "XMLHttpRequest",
     origin: "https://seo-fast.ru",
@@ -906,7 +938,7 @@ async function doDesktopLogin(
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
-    "user-agent": "Mozilla/5.0 (Android 12; Mobile; rv:151.0) Gecko/151.0 Firefox/151.0",
+    "user-agent": getBrowserUA(),
   };
 
   let resp: HttpResponse;
@@ -1352,11 +1384,15 @@ export async function executeWithdrawal(
   email: string,
   password: string,
   amount: number,
-  emit: EmitFn
+  emit: EmitFn,
+  browserHeaders?: BrowserHeaders
 ): Promise<{ success: boolean; message: string; balance?: string }> {
+  // Setar headers do navegador real
+  if (browserHeaders) _sessionBrowserHeaders = browserHeaders;
+
   let session = sessions.get(email);
   if (!session || Date.now() - session.lastActivity > SESSION_TTL_MS) {
-    const loginResult = await loginSession(email, password, emit);
+    const loginResult = await loginSession(email, password, emit, undefined, browserHeaders);
     if (loginResult.status !== "connected") {
       return { success: false, message: loginResult.message || "Falha no login" };
     }
