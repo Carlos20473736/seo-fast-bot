@@ -7,7 +7,7 @@
  *  2. Obter senha (resposta do registro ou via e-mail IMAP)
  *  3. Login mobile estilo APK 1.1.1 (device_id pro_, X-App-Token SHA-256,
  *     perfis PRO, hash_ajax, up_data)
- *  4. Solicitar verificação de carteira (verifik_test/verifik) + confirmar via link de e-mail
+ *  4. Login desktop em seo-fast.ru (sessão separada) + verificação de carteira
  *  5. Salvar carteira FaucetPay (purse_add, sys=faucetpay)
  */
 
@@ -34,6 +34,10 @@ const SEOFAST_PACKAGE_NAME = "com.example.seofast";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
+
+// Firefox/Android UA para login desktop (consistente com o que funciona na captura)
+const FIREFOX_MOBILE_UA =
+  "Mozilla/5.0 (Android 12; Mobile; rv:151.0) Gecko/151.0 Firefox/151.0";
 
 // Headers estáticos mantidos como fallback
 const SEOFAST_HEADERS: Record<string, string> = {
@@ -269,6 +273,17 @@ class HttpClient {
     return c ? c.value : null;
   }
 
+  /**
+   * Define um cookie manualmente no jar para um dado URL/domínio.
+   */
+  setCookie(name: string, value: string, url: string) {
+    try {
+      this.jar.setCookieSync(`${name}=${value}; path=/`, url);
+    } catch {
+      // ignora erros de cookie
+    }
+  }
+
   async request(
     method: "GET" | "POST",
     url: string,
@@ -448,6 +463,51 @@ function profileAjaxHeaders(): Record<string, string> {
     "sec-fetch-site": "same-origin",
     "sec-fetch-mode": "cors",
     "sec-fetch-dest": "empty",
+  };
+}
+
+// ============================================================
+// HEADERS DESKTOP (seo-fast.ru) - para login e AJAX no domínio .ru
+// ============================================================
+
+/**
+ * Headers para navegação de página HTML no desktop (GET de páginas como /login, /profile)
+ * Usa Firefox/Android (consistente com a captura de tráfego que funciona)
+ */
+function desktopPageHeaders(referer?: string): Record<string, string> {
+  return {
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1",
+    "user-agent": FIREFOX_MOBILE_UA,
+    ...(referer ? { referer } : {}),
+  };
+}
+
+/**
+ * Headers para requisições AJAX no desktop (POST para ajax_profile.php, ajax_login.php)
+ * Usa Firefox/Android com Origin/Referer para seo-fast.ru
+ */
+function desktopAjaxHeaders(referer: string = `${SEOFAST_URL}/profile`): Record<string, string> {
+  return {
+    accept: "*/*",
+    "accept-language": "en-US",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "x-requested-with": "XMLHttpRequest",
+    origin: SEOFAST_URL,
+    referer,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": FIREFOX_MOBILE_UA,
+    "priority": "u=0",
+    te: "trailers",
   };
 }
 
@@ -831,33 +891,217 @@ async function seofastMobileLogin(
 }
 
 // ============================================================
-// ETAPA 4 - VERIFICAÇÃO DE CARTEIRA
+// ETAPA 3.5 - LOGIN DESKTOP (seo-fast.ru) — SESSÃO SEPARADA
+// ============================================================
+
+/**
+ * Extrai o token l_entrance da página de login do seo-fast.ru.
+ * O site entrega esse token em vários formatos; tentamos uma cadeia de padrões.
+ */
+function extractEntranceToken(html: string): string | null {
+  const patterns: RegExp[] = [
+    /l_entrance\s*=\s*\$\.trim\(\s*['"]([a-fA-F0-9]{16,})['"]\s*\)/i,
+    /l_entrance\s*=\s*['"]([a-fA-F0-9]{16,})['"]/i,
+    /l_entrance\s*:\s*['"]([a-fA-F0-9]{16,})['"]/i,
+    /name=['"]l_entrance['"][^>]*value=['"]([a-fA-F0-9]{16,})['"]/i,
+    /value=['"]([a-fA-F0-9]{16,})['"][^>]*name=['"]l_entrance['"]/i,
+    /name=['"]sf['"][^>]*value=['"]([a-fA-F0-9]{16,})['"]/i,
+    /value=['"]([a-fA-F0-9]{16,})['"][^>]*name=['"]sf['"]/i,
+  ];
+
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) return m[1];
+  }
+
+  // Último recurso: capturar qualquer atribuição a l_entrance
+  const loose = html.match(/l_entrance[\s\S]{0,40}?([a-fA-F0-9]{16,})/i);
+  if (loose && loose[1]) return loose[1];
+
+  return null;
+}
+
+/**
+ * Login no domínio desktop (seo-fast.ru) usando um HttpClient separado.
+ * Necessário porque seo-fast.bz e seo-fast.ru são domínios diferentes
+ * com cookie jars separados. O ajax_profile.php só funciona com sessão .ru.
+ *
+ * Baseado no fluxo real capturado:
+ *  1. GET /login → obtém l_entrance + cookie entrance
+ *  2. POST /ajax/ajax_login.php com sf=l_entrance + logusername + logpassword
+ *  3. Resposta "0" = sucesso
+ */
+async function loginDesktop(
+  client: HttpClient,
+  email: string,
+  password: string,
+  emit: EmitFn
+): Promise<boolean> {
+  emit.log(`[Desktop] Autenticando em seo-fast.ru...`, "info");
+
+  // Step 1: GET login page para obter l_entrance e cookies (PHPSESSID, entrance)
+  let resp: HttpResponse | null = null;
+  let lEntrance: string | null = null;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      resp = await client.request("GET", `${SEOFAST_URL}/login`, {
+        headers: desktopPageHeaders(SEOFAST_URL + "/"),
+      });
+    } catch (e: any) {
+      emit.log(`Erro GET login desktop: ${e.message?.slice(0, 80)}`, "error");
+      return false;
+    }
+
+    // Verificar se já está logado
+    if (resp.text.includes("bm-balance") || resp.text.includes("balanceUp") || resp.text.includes("mystat")) {
+      emit.log(`[Desktop] Já autenticado em seo-fast.ru`, "success");
+      return true;
+    }
+
+    // Extrair l_entrance
+    lEntrance = extractEntranceToken(resp.text);
+    if (lEntrance) break;
+
+    if (attempt < 2) {
+      emit.log("[Desktop] Token não encontrado na 1ª tentativa, repetindo GET...", "warn");
+      await sleep(1200 + Math.random() * 800);
+    }
+  }
+
+  if (!resp) return false;
+
+  // Extrair val_entrance (usado como cookie evercookie)
+  let valEntrance: string | null = null;
+  const valEntranceMatch =
+    resp.text.match(/val_entrance\s*=\s*\$\.trim\(\s*['"]([a-fA-F0-9]{16,})['"]\s*\)/i) ||
+    resp.text.match(/val_entrance\s*=\s*['"]([a-fA-F0-9]{16,})['"]/i);
+  if (valEntranceMatch) {
+    valEntrance = valEntranceMatch[1];
+  }
+
+  if (!lEntrance) {
+    emit.log(`[Desktop] l_entrance não encontrado na página de login`, "error");
+    const around = resp.text.match(/.{0,40}l_entrance.{0,80}/i);
+    if (around) {
+      emit.log(`[Desktop] Trecho: ${around[0].replace(/\s+/g, ' ').trim()}`, "info");
+    }
+    return false;
+  }
+
+  emit.log(`[Desktop] l_entrance: ${lEntrance.slice(0, 8)}...`, "info");
+
+  // Setar cookie entrance (val_entrance)
+  if (valEntrance) {
+    client.setCookie("entrance", valEntrance, SEOFAST_URL);
+  }
+
+  await sleep(800 + Math.random() * 500);
+
+  // Step 2: POST login com sf=l_entrance + logusername + logpassword
+  // Usa apenas os parâmetros mínimos (como Firefox mobile - comprovado na captura)
+  const loginData = new URLSearchParams({
+    sf: lEntrance,
+    logusername: email,
+    logpassword: password,
+  }).toString();
+
+  const loginHeaders = desktopAjaxHeaders(`${SEOFAST_URL}/register`);
+
+  let loginResp: HttpResponse;
+  try {
+    loginResp = await client.request("POST", `${SEOFAST_URL}/ajax/ajax_login.php`, {
+      headers: loginHeaders,
+      body: loginData,
+    });
+  } catch (e: any) {
+    emit.log(`[Desktop] Erro POST login: ${e.message?.slice(0, 80)}`, "error");
+    return false;
+  }
+
+  const loginRespText = loginResp.text?.trim() || "";
+  emit.log(`[Desktop] Login resp: '${loginRespText.slice(0, 60)}'`, "info");
+
+  // Resposta "0" = sucesso (redirect para mystat)
+  if (loginRespText === "0") {
+    emit.log(`[Desktop] Login aceito em seo-fast.ru (resp=0)`, "success");
+    return true;
+  }
+
+  // Resposta é um hash hex de 32 chars = entrance_session (sucesso)
+  if (loginRespText.length === 32 && /^[a-fA-F0-9]+$/.test(loginRespText)) {
+    emit.log(`[Desktop] Login aceito com entrance_session`, "success");
+    client.setCookie("entrance", loginRespText, SEOFAST_URL);
+    return true;
+  }
+
+  if (loginRespText.includes("location.replace") || loginRespText.includes("location.href")) {
+    emit.log(`[Desktop] Login aceito em seo-fast.ru (redirect)`, "success");
+    return true;
+  }
+
+  if (loginRespText.includes("error_load") || loginRespText.toLowerCase().includes("ошибка") || loginRespText.includes("Неверный")) {
+    emit.log(`[Desktop] Login recusado: ${loginRespText.slice(0, 150)}`, "error");
+    return false;
+  }
+
+  if (loginRespText.includes("captcha") || loginRespText.includes("капча") || loginRespText.includes("Капча")) {
+    emit.log(`[Desktop] Captcha requerido para login desktop`, "warn");
+    return false;
+  }
+
+  // Tentar verificar acessando /profile
+  await sleep(500);
+  try {
+    const checkResp = await client.request("GET", `${SEOFAST_URL}/profile`, {
+      headers: desktopPageHeaders(`${SEOFAST_URL}/mystat`),
+    });
+    if (checkResp.text.includes("editprofile") || checkResp.text.includes("Кошельки") || checkResp.text.includes("purse")) {
+      emit.log(`[Desktop] Login confirmado via /profile`, "success");
+      return true;
+    }
+  } catch {
+    // Ignora erros de verificação
+  }
+
+  emit.log(`[Desktop] Resposta login inesperada: ${loginRespText.slice(0, 100)}`, "warn");
+  return false;
+}
+
+// ============================================================
+// ETAPA 4 - VERIFICAÇÃO DE CARTEIRA (USANDO SESSÃO DESKTOP .ru)
 // ============================================================
 
 type VerifStatus = "verified" | "email_sent" | "already_requested" | "not_logged_in" | "error";
 
-async function seofastRequestVerification(client: HttpClient, emit: EmitFn): Promise<VerifStatus> {
+/**
+ * Solicita verificação de carteira usando sessão desktop autenticada em seo-fast.ru.
+ * 
+ * CORREÇÃO: O endpoint ajax_profile.php requer sessão autenticada no domínio .ru.
+ * O login mobile (seo-fast.bz) NÃO compartilha cookies com .ru.
+ * Portanto, usamos um desktopClient separado que fez login em seo-fast.ru.
+ */
+async function seofastRequestVerification(
+  desktopClient: HttpClient,
+  emit: EmitFn
+): Promise<VerifStatus> {
   emit.log("[SF 4/5] Solicitando verificação de carteira...", "info");
 
+  // Navegar para /profile primeiro (simula comportamento do browser)
   try {
-    await client.request("GET", SEOFAST_MOBILE_URL + "?pg=profile", { headers: mobilePageHeaders() });
+    await desktopClient.request("GET", `${SEOFAST_URL}/profile`, {
+      headers: desktopPageHeaders(`${SEOFAST_URL}/mystat`),
+    });
   } catch {
     // não crítico
   }
   await sleep(1000);
 
-  const headers = profileAjaxHeaders();
+  // Headers para AJAX no domínio .ru (como na captura de tráfego que funciona)
+  const headers = desktopAjaxHeaders(`${SEOFAST_URL}/profile`);
 
-  // O endpoint ajax_profile.php não existe no webapp mobile (seo-fast.bz/webapp/).
-  // Precisamos usar a URL base do desktop (seo-fast.bz/ ou seo-fast.ru/)
-  const desktopHeaders = {
-    ...headers,
-    Origin: "https://seo-fast.bz",
-    Referer: "https://seo-fast.bz/profile",
-  };
-
-  const r = await client.request("POST", "https://seo-fast.bz/ajax/ajax_profile.php", {
-    headers: desktopHeaders,
+  const r = await desktopClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
+    headers,
     body: new URLSearchParams({ sf: "verifik_test" }).toString(),
   });
   const responseText = r.text.trim();
@@ -870,8 +1114,8 @@ async function seofastRequestVerification(client: HttpClient, emit: EmitFn): Pro
 
   if (responseText === "1") {
     emit.log("Enviando e-mail de verificação...", "info");
-    const r2 = await client.request("POST", "https://seo-fast.bz/ajax/ajax_profile.php", {
-      headers: desktopHeaders,
+    const r2 = await desktopClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
+      headers,
       body: new URLSearchParams({ sf: "verifik" }).toString(),
     });
     const resp = r2.text.trim();
@@ -889,6 +1133,12 @@ async function seofastRequestVerification(client: HttpClient, emit: EmitFn): Pro
 
   if (responseText.includes("Войдите") || responseText.toLowerCase().includes("войдите")) {
     emit.log("Sessão expirada (não logado para profile)", "error");
+    return "not_logged_in";
+  }
+
+  // Verificar se a resposta contém HTML (indica que não está logado - redirecionou para home)
+  if (responseText.includes("<script") && responseText.includes("load_site")) {
+    emit.log("Sessão expirada (resposta contém script de redirecionamento)", "error");
     return "not_logged_in";
   }
 
@@ -925,7 +1175,7 @@ async function seofastConfirmVerification(
 
   try {
     const verifyClient = new HttpClient({
-      "user-agent": generateUserAgent(getRandomProfile()),
+      "user-agent": FIREFOX_MOBILE_UA,
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }, proxyAgent);
     const r = await verifyClient.request("GET", cleanLink, {});
@@ -938,21 +1188,31 @@ async function seofastConfirmVerification(
 }
 
 // ============================================================
-// ETAPA 5 - SALVAR CARTEIRA FAUCETPAY
+// ETAPA 5 - SALVAR CARTEIRA FAUCETPAY (USANDO SESSÃO DESKTOP .ru)
 // ============================================================
 
+/**
+ * Salva a carteira FaucetPay usando sessão desktop autenticada em seo-fast.ru.
+ * 
+ * CORREÇÃO: Usa o desktopClient (sessão .ru) em vez do client mobile (.bz).
+ */
 async function seofastSaveWallet(
-  client: HttpClient,
+  desktopClient: HttpClient,
   faucetpayEmail: string,
   emit: EmitFn
 ): Promise<boolean> {
   emit.log(`[SF 5/5] Salvando carteira FaucetPay: ${faucetpayEmail}`, "info");
-  const headers = profileAjaxHeaders();
 
-  await client.request("GET", SEOFAST_MOBILE_URL + "?pg=profile", { headers: mobilePageHeaders() });
+  // Navegar para /profile primeiro
+  await desktopClient.request("GET", `${SEOFAST_URL}/profile`, {
+    headers: desktopPageHeaders(`${SEOFAST_URL}/mystat`),
+  });
   await sleep(1000);
 
-  const test = await client.request("POST", SEOFAST_MOBILE_URL + "ajax/ajax_profile.php", {
+  const headers = desktopAjaxHeaders(`${SEOFAST_URL}/profile`);
+
+  // Verificar se está verificado
+  const test = await desktopClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
     headers,
     body: new URLSearchParams({ sf: "verifik_test" }).toString(),
   });
@@ -961,6 +1221,7 @@ async function seofastSaveWallet(
     return false;
   }
 
+  // Salvar carteira
   const data = new URLSearchParams({
     sf: "purse_add",
     sys: "faucetpay",
@@ -968,7 +1229,7 @@ async function seofastSaveWallet(
     mobile_o: "",
   }).toString();
 
-  const r = await client.request("POST", SEOFAST_MOBILE_URL + "ajax/ajax_profile.php", {
+  const r = await desktopClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
     headers,
     body: data,
   });
@@ -1031,7 +1292,7 @@ export async function createSeofastAccount(
   });
   emit.log(`Proxy SEOFast: ${proxyLabel(proxyCfg, userEmail)}`, "info");
 
-  const desktopClient = new HttpClient({}, proxyAgent);
+  const registrationClient = new HttpClient({}, proxyAgent);
 
   let username = seofastUsername;
   if (!username) {
@@ -1050,7 +1311,7 @@ export async function createSeofastAccount(
   emit.log(`Nick SEO-Fast: ${username} | Carteira: ${faucetpayEmail}`, "info");
 
   // 1. Registro desktop
-  const regResult = await seofastRegister(desktopClient, username, userEmail, emit);
+  const regResult = await seofastRegister(registrationClient, username, userEmail, emit);
   if (!regResult) {
     return { success: false, message: "Falha no registro SEOFast." };
   }
@@ -1073,7 +1334,7 @@ export async function createSeofastAccount(
   }
   emit.log(`Senha SEOFast: ${seofastPassword}`, "info");
 
-  // 3. Login mobile
+  // 3. Login mobile (seo-fast.bz/webapp/)
   await sleep(2000);
   const login = await seofastMobileLogin(userEmail, seofastPassword, emit, proxyAgent);
   if (!login) {
@@ -1085,8 +1346,56 @@ export async function createSeofastAccount(
     };
   }
 
-  // 4. Verificação
-  const verifStatus = await seofastRequestVerification(login.client, emit);
+  // 3.5. Login desktop (seo-fast.ru) — sessão separada para ajax_profile.php
+  // CORREÇÃO: seo-fast.bz e seo-fast.ru são domínios diferentes com cookie jars
+  // separados. O ajax_profile.php (verifik_test, verifik, purse_add) só funciona
+  // com sessão autenticada em seo-fast.ru.
+  await sleep(1500);
+  const desktopClient = new HttpClient({}, proxyAgent);
+  const desktopLoggedIn = await loginDesktop(desktopClient, userEmail, seofastPassword, emit);
+  if (!desktopLoggedIn) {
+    emit.log("Falha no login desktop, tentando usar token do registro...", "warn");
+    // Fallback: tentar usar o registrationClient que já tem cookies do registro
+    // (pode funcionar se a sessão do registro ainda estiver ativa)
+    const fallbackResp = await registrationClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
+      headers: desktopAjaxHeaders(`${SEOFAST_URL}/profile`),
+      body: new URLSearchParams({ sf: "verifik_test" }).toString(),
+    });
+    if (fallbackResp.text.trim() === "1" || fallbackResp.text.trim() === "2") {
+      emit.log("[Desktop] Sessão do registro ainda ativa, usando-a.", "success");
+      // Usar registrationClient como desktopClient
+      const verifStatus = await seofastRequestVerification(registrationClient, emit);
+      if (verifStatus === "email_sent" || verifStatus === "already_requested") {
+        await sleep(5000);
+        await seofastConfirmVerification(config, emit, proxyAgent);
+      }
+      await sleep(2000);
+      const walletSaved = await seofastSaveWallet(registrationClient, faucetpayEmail, emit);
+      if (walletSaved) {
+        return {
+          success: true,
+          username,
+          password: seofastPassword,
+          message: "Conta SEOFast criada e carteira FaucetPay configurada!",
+        };
+      }
+      return {
+        success: false,
+        username,
+        password: seofastPassword,
+        message: "Conta SEOFast criada, mas carteira não foi salva (login desktop falhou).",
+      };
+    }
+    return {
+      success: false,
+      username,
+      password: seofastPassword,
+      message: "Falha no login desktop SEOFast.",
+    };
+  }
+
+  // 4. Verificação (usando sessão desktop .ru)
+  const verifStatus = await seofastRequestVerification(desktopClient, emit);
   if (verifStatus === "email_sent" || verifStatus === "already_requested") {
     await sleep(5000);
     const confirmed = await seofastConfirmVerification(config, emit, proxyAgent);
@@ -1107,9 +1416,9 @@ export async function createSeofastAccount(
     };
   }
 
-  // 5. Salvar carteira
+  // 5. Salvar carteira (usando sessão desktop .ru)
   await sleep(2000);
-  const walletSaved = await seofastSaveWallet(login.client, faucetpayEmail, emit);
+  const walletSaved = await seofastSaveWallet(desktopClient, faucetpayEmail, emit);
 
   if (walletSaved) {
     return {
