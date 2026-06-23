@@ -65,7 +65,8 @@ export function registerSocketIO(httpServer: HttpServer) {
         email: data.email,
         password: data.password,
         referrer: data.referrer,
-        createSeofast: data.createSeofast,
+        createSeofast: data.existingAccount ? true : data.createSeofast,
+        existingAccount: data.existingAccount,
       };
 
       createAccountProcess(accountData, emit, browserHeaders).catch((err) => {

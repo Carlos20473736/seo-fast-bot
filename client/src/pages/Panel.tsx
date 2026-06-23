@@ -194,6 +194,7 @@ export default function Panel() {
     password: string;
     referrer?: string;
     createSeofast?: boolean;
+    existingAccount?: boolean;
   }) => {
     if (!socket || !connected) {
       addLog("Não conectado ao servidor!", "error");

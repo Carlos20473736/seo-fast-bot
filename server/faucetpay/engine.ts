@@ -1074,7 +1074,20 @@ export async function createAccountProcess(data: AccountData, emit: EmitFn, brow
   };
 
   if (db) {
-    await db.insert(accounts).values(accountRecord);
+    if (data.existingAccount) {
+      // Conta existente: atualiza se já existir, insere se não
+      const existing = await db.select().from(accounts).where(eq(accounts.email, data.email)).limit(1);
+      if (existing.length > 0) {
+        await db.update(accounts).set({
+          status: "ativada",
+          createSeofast: data.createSeofast ? 1 : 0,
+        }).where(eq(accounts.email, data.email));
+      } else {
+        await db.insert(accounts).values(accountRecord);
+      }
+    } else {
+      await db.insert(accounts).values(accountRecord);
+    }
   }
 
   if (activated) {
@@ -1106,7 +1119,9 @@ export async function createAccountProcess(data: AccountData, emit: EmitFn, brow
       
       emit.result({ 
         success: true, 
-        message: "Contas FaucetPay e SEOFast criadas e ativadas!",
+        message: data.existingAccount 
+          ? "Conta SEOFast criada e vinculada com sucesso!" 
+          : "Contas FaucetPay e SEOFast criadas e ativadas!",
         account: { ...accountRecord, seofastUsername: sfResult.username, seofastStatus: "ativada" }
       });
     } else {

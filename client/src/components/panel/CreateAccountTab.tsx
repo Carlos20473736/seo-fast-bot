@@ -10,6 +10,7 @@ interface Props {
     password: string;
     referrer?: string;
     createSeofast?: boolean;
+    existingAccount?: boolean;
   }) => void;
   isRunning: boolean;
 }
@@ -27,6 +28,7 @@ interface DraftData {
   password: string;
   referrer: string;
   createSeofast: boolean;
+  existingAccount?: boolean;
   savedAt: number;
 }
 
@@ -128,6 +130,7 @@ export default function CreateAccountTab({ onSubmit, isRunning }: Props) {
     setPassword("");
     setReferrer("");
     setCreateSeofast(true);
+    setExistingAccount(false);
     clearDraft();
     setHasDraft(false);
   };
