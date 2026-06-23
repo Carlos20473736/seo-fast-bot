@@ -478,6 +478,7 @@ function profileAjaxHeaders(): Record<string, string> {
 /**
  * Headers para navegação de página HTML no desktop (GET de páginas como /login, /profile)
  * Usa Firefox/Android (consistente com a captura de tráfego que funciona)
+ * NOTA: Firefox NÃO envia sec-ch-ua headers, por isso são omitidos.
  */
 function desktopPageHeaders(referer?: string): Record<string, string> {
   return {
@@ -489,7 +490,7 @@ function desktopPageHeaders(referer?: string): Record<string, string> {
     "sec-fetch-site": "same-origin",
     "sec-fetch-user": "?1",
     "upgrade-insecure-requests": "1",
-    "user-agent": getBrowserUA(),
+    "user-agent": FALLBACK_MOBILE_UA,
     ...(referer ? { referer } : {}),
   };
 }
@@ -497,6 +498,8 @@ function desktopPageHeaders(referer?: string): Record<string, string> {
 /**
  * Headers para requisições AJAX no desktop (POST para ajax_profile.php, ajax_login.php)
  * Usa Firefox/Android com Origin/Referer para seo-fast.ru
+ * Baseado na captura de tráfego real que funciona (request 140).
+ * Firefox NÃO envia sec-ch-ua, priority, etc.
  */
 function desktopAjaxHeaders(referer: string = `${SEOFAST_URL}/profile`): Record<string, string> {
   return {
@@ -510,8 +513,7 @@ function desktopAjaxHeaders(referer: string = `${SEOFAST_URL}/profile`): Record<
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
-    "user-agent": getBrowserUA(),
-    "priority": "u=0",
+    "user-agent": FALLBACK_MOBILE_UA,
     te: "trailers",
   };
 }
@@ -1010,10 +1012,11 @@ async function loginDesktop(
 
   emit.log(`[Desktop] l_entrance: ${lEntrance.slice(0, 8)}...`, "info");
 
-  // Setar cookie entrance (val_entrance)
+  // Setar cookie entrance (val_entrance) e info_mobail (como na captura real)
   if (valEntrance) {
     client.setCookie("entrance", valEntrance, SEOFAST_URL);
   }
+  client.setCookie("info_mobail", "true", SEOFAST_URL);
 
   await sleep(800 + Math.random() * 500);
 
@@ -1025,7 +1028,7 @@ async function loginDesktop(
     logpassword: password,
   }).toString();
 
-  const loginHeaders = desktopAjaxHeaders(`${SEOFAST_URL}/register`);
+  const loginHeaders = desktopAjaxHeaders(`${SEOFAST_URL}/login`);
 
   let loginResp: HttpResponse;
   try {
@@ -1359,50 +1362,36 @@ export async function createSeofastAccount(
   }
   emit.log(`Senha SEOFast: ${seofastPassword}`, "info");
 
-  // 3. Login mobile (seo-fast.bz/webapp/)
+  // 3. Login desktop (seo-fast.ru) — usa o fluxo real do site
+  // NOTA: O login mobile (seo-fast.bz/webapp/) foi removido pois retorna
+  // "Ошибка приложения". O fluxo desktop funciona corretamente e é o mesmo
+  // usado pelo navegador real (captura de tráfego confirmada).
   await sleep(2000);
-  const login = await seofastMobileLogin(userEmail, seofastPassword, emit, proxyAgent);
-  if (!login) {
-    return {
-      success: false,
-      username,
-      password: seofastPassword,
-      message: "Falha no login mobile SEOFast.",
-    };
-  }
-
-  // 3.5. Login desktop (seo-fast.ru) — sessão separada para ajax_profile.php
-  // CORREÇÃO: seo-fast.bz e seo-fast.ru são domínios diferentes com cookie jars
-  // separados. O ajax_profile.php (verifik_test, verifik, purse_add) só funciona
-  // com sessão autenticada em seo-fast.ru.
-  await sleep(1500);
-  const desktopClient = new HttpClient({}, proxyAgent);
-  const desktopLoggedIn = await loginDesktop(desktopClient, userEmail, seofastPassword, emit);
-  if (!desktopLoggedIn) {
-    emit.log("Falha no login desktop, tentando usar token do registro...", "warn");
-    // Fallback: tentar usar o registrationClient que já tem cookies do registro
-    // (pode funcionar se a sessão do registro ainda estiver ativa)
+  let desktopClient: HttpClient = new HttpClient({}, proxyAgent);
+  
+  // Tentar primeiro usar a sessão do registro (se acabou de registrar, já está logado)
+  let desktopLoggedIn = false;
+  if (!regResult.emailInUse) {
+    // Conta recém-criada: a sessão do registrationClient pode estar ativa
     const fallbackResp = await registrationClient.request("POST", `${SEOFAST_URL}/ajax/ajax_profile.php`, {
       headers: desktopAjaxHeaders(`${SEOFAST_URL}/profile`),
       body: new URLSearchParams({ sf: "verifik_test" }).toString(),
     });
     if (fallbackResp.text.trim() === "1" || fallbackResp.text.trim() === "2") {
-      emit.log("[Desktop] Sessão do registro ainda ativa, usando-a.", "success");
-      // Usar registrationClient como desktopClient
-      const verifStatus = await seofastRequestVerification(registrationClient, emit);
-      if (verifStatus === "email_sent" || verifStatus === "already_requested") {
-        await sleep(5000);
-        await seofastConfirmVerification(config, emit, proxyAgent);
-      }
-      // Vinculação wallet DESATIVADA - usuário vincula manualmente
-      emit.log("[SF 5/5] Vinculação FaucetPay desativada (vincular manualmente).", "info");
-      return {
-        success: true,
-        username,
-        password: seofastPassword,
-        message: "Conta SEOFast criada com sucesso! Vincule a carteira FaucetPay manualmente.",
-      };
+      emit.log("[Desktop] Sessão do registro ainda ativa, reutilizando.", "success");
+      desktopLoggedIn = true;
+      // Reutilizar o registrationClient que já tem a sessão autenticada
+      desktopClient = registrationClient;
     }
+  }
+
+  if (!desktopLoggedIn) {
+    // Login desktop normal via /login (GET l_entrance + POST ajax_login.php)
+    emit.log("[SF 3/5] Login desktop em seo-fast.ru...", "info");
+    desktopLoggedIn = await loginDesktop(desktopClient, userEmail, seofastPassword, emit);
+  }
+
+  if (!desktopLoggedIn) {
     return {
       success: false,
       username,
